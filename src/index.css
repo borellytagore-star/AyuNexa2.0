@@ -1,0 +1,201 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* ========================================================
+       AYUNEXA CENTRAL BRAND DESIGN TOKENS
+       Extracted directly from the official AyuNexa Brand Logo
+       ======================================================== */
+
+    /* Primary Brand: Deep Royal Plum & Amethyst */
+    --color-primary: #701a75;
+    --color-primary-hover: #581c87;
+    --color-primary-active: #4a044e;
+    --color-primary-soft: #fdf4ff;
+
+    /* Secondary Brand: Vibrant Amethyst Magenta */
+    --color-secondary: #be185d;
+    --color-secondary-hover: #9d174d;
+    --color-secondary-soft: #fdf2f8;
+
+    /* Accent: Warm Ayurvedic Gold & Leaf Amber */
+    --color-accent: #ca8a04;
+    --color-accent-hover: #a16207;
+    --color-accent-soft: #fefce8;
+
+    /* Healthcare Light Background & Neutral Surfaces */
+    --color-background: #faf8fa;
+    --color-surface: #ffffff;
+    --color-surface-elevated: #ffffff;
+    --color-surface-muted: #f4eff5;
+
+    /* High Contrast Accessible Typography */
+    --color-text-primary: #1e1b2e;
+    --color-text-secondary: #585163;
+    --color-text-muted: #8b8296;
+
+    /* Subtle Hairline Borders */
+    --color-border: #f0e4f2;
+    --color-border-subtle: #f8eff8;
+
+    /* Semantic Status Colors (Recognizable & Accessible) */
+    --color-success: #059669;
+    --color-success-soft: #ecfdf5;
+    --color-warning: #d97706;
+    --color-warning-soft: #fffbeb;
+    --color-error: #dc2626;
+    --color-error-soft: #fef2f2;
+    --color-info: #2563eb;
+    --color-info-soft: #eff6ff;
+
+    /* Emergency SOS Crimson */
+    --color-sos: #b91c1c;
+    --color-sos-hover: #991b1b;
+  }
+
+  /* Dark mode overrides if toggled */
+  .dark {
+    --color-background: #110e16;
+    --color-surface: #1a1622;
+    --color-surface-elevated: #241f2f;
+    --color-surface-muted: #211c2a;
+    --color-text-primary: #fdf8fb;
+    --color-text-secondary: #cbd5e1;
+    --color-text-muted: #94a3b8;
+    --color-border: #32293e;
+    --color-border-subtle: #251e2e;
+    --color-primary-soft: #2e1038;
+    --color-secondary-soft: #380d22;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Centralized Brand Utility Classes */
+.bg-brand-primary {
+  background-color: var(--color-primary);
+}
+.bg-brand-primary-hover:hover {
+  background-color: var(--color-primary-hover);
+}
+.bg-brand-secondary {
+  background-color: var(--color-secondary);
+}
+.bg-brand-accent {
+  background-color: var(--color-accent);
+}
+.bg-brand-primary-soft {
+  background-color: var(--color-primary-soft);
+}
+.bg-brand-secondary-soft {
+  background-color: var(--color-secondary-soft);
+}
+.bg-brand-accent-soft {
+  background-color: var(--color-accent-soft);
+}
+.text-brand-primary {
+  color: var(--color-primary);
+}
+.text-brand-secondary {
+  color: var(--color-secondary);
+}
+.text-brand-accent {
+  color: var(--color-accent);
+}
+.border-brand {
+  border-color: var(--color-border);
+}
+
+/* AyuNexa Standard Card */
+.ayunexa-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  box-shadow: 0 1px 3px 0 rgba(74, 4, 78, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ayunexa-card:hover {
+  box-shadow: 0 4px 12px 0 rgba(74, 4, 78, 0.06);
+}
+
+/* AyuNexa Button System */
+.btn-ayunexa-primary {
+  background-color: var(--color-primary);
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: 0.75rem;
+  padding: 0.5rem 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+.btn-ayunexa-primary:hover {
+  background-color: var(--color-primary-hover);
+  transform: translateY(-0.5px);
+}
+.btn-ayunexa-primary:active {
+  background-color: var(--color-primary-active);
+  transform: translateY(0);
+}
+
+.btn-ayunexa-secondary {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+  border: 1px solid var(--color-border);
+  font-weight: 600;
+  border-radius: 0.75rem;
+  padding: 0.5rem 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+.btn-ayunexa-secondary:hover {
+  background-color: #fae8ff;
+  color: var(--color-primary-active);
+}
+
+.btn-ayunexa-destructive {
+  background-color: var(--color-error);
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: 0.75rem;
+  padding: 0.5rem 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+.btn-ayunexa-destructive:hover {
+  background-color: #b91c1c;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(112, 26, 117, 0.18);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(112, 26, 117, 0.35);
+}

@@ -1,0 +1,11 @@
+{
+  "name": "AyuNexa — Connected Care. Smarter Health.",
+  "description": "AyuNexa is an intelligent healthcare ecosystem supporting medication management, caregiver coordination, doctor clinical workflows, and a full-featured Admin & Operations Console.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
