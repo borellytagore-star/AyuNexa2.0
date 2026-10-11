@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Wifi,
@@ -7,24 +7,19 @@ import {
   Eye,
   Smartphone,
   Maximize2,
-  HeartHandshake,
-  UserCheck,
-  Stethoscope,
   ShieldAlert,
   ShieldCheck,
   BatteryCharging,
   Volume2,
   Database,
-  LogIn,
+  LogOut,
 } from 'lucide-react';
 import { SupportedLanguage } from '../../data/initialData';
 import { AyuNexaLogo } from './AyuNexaLogo';
-import { LoginModal } from './LoginModal';
+import { useAuth } from '../../auth/SupabaseAuth';
 
 export const Header: React.FC = () => {
   const {
-    role,
-    setRole,
     isAssistedMode,
     setIsAssistedMode,
     isOnline,
@@ -43,7 +38,7 @@ export const Header: React.FC = () => {
     setIsSyncModalOpen,
   } = useApp();
 
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const { session, profile, signOut } = useAuth();
 
   return (
     <header className="bg-white/95 backdrop-blur-md border-b border-slate-200 sticky top-0 z-30 px-3 py-2 sm:px-6 sm:py-3 transition-colors shadow-xs">
@@ -51,9 +46,8 @@ export const Header: React.FC = () => {
         {/* Official Brand Logo */}
         <div className="flex items-center justify-between">
           <div
-            onClick={() => setIsLoginModalOpen(true)}
-            className="cursor-pointer group transition-opacity hover:opacity-95"
-            title="Click to switch profile or view official AyuNexa branding"
+            className="group transition-opacity hover:opacity-95"
+            title="AyuNexa — Connected Care. Smarter Health."
           >
             {/* Desktop / Tablet view */}
             <div className="hidden sm:block">
@@ -76,77 +70,26 @@ export const Header: React.FC = () => {
           </button>
         </div>
 
-        {/* Global Controls & Persona Switchers */}
+        {/* Authenticated identity and session controls */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {/* Persona Switcher: Patient / Caregiver / Doctor */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-inner">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-purple-100 bg-purple-50 px-3 py-2">
+            <span className="font-semibold text-slate-800">
+              {profile?.display_name || session?.user.email || 'Signed-in user'}
+            </span>
+            <span className="rounded-lg bg-purple-900 px-2 py-1 text-[10px] font-extrabold uppercase tracking-wide text-white">
+              {profile?.role.replace(/_/g, ' ') || 'authenticated'}
+            </span>
             <button
+              type="button"
               onClick={() => {
-                setRole('PATIENT');
-                speakText('Switched to Patient view for Ravi Kumar');
+                void signOut().catch(() => window.alert('Sign out failed. Please try again.'));
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                role === 'PATIENT'
-                  ? 'bg-gradient-to-r from-[#4a044e] to-[#701a75] text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 font-bold text-purple-900 hover:bg-purple-100"
             >
-              <UserCheck className={`w-3.5 h-3.5 ${role === 'PATIENT' ? 'text-pink-300' : 'text-purple-700'}`} />
-              <span>Ravi (Patient)</span>
-            </button>
-            <button
-              onClick={() => {
-                setRole('CAREGIVER');
-                speakText('Switched to Caregiver view for Tagore');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                role === 'CAREGIVER'
-                  ? 'bg-gradient-to-r from-[#831843] to-[#be185d] text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <HeartHandshake className={`w-3.5 h-3.5 ${role === 'CAREGIVER' ? 'text-pink-200' : 'text-pink-600'}`} />
-              <span>Tagore (Caregiver)</span>
-            </button>
-            <button
-              onClick={() => {
-                setRole('DOCTOR');
-                speakText('Switched to Clinical Doctor view for Dr. Rao');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                role === 'DOCTOR'
-                  ? 'bg-gradient-to-r from-indigo-700 to-blue-700 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Stethoscope className={`w-3.5 h-3.5 ${role === 'DOCTOR' ? 'text-blue-200' : 'text-indigo-600'}`} />
-              <span>Dr. Rao (Clinical)</span>
-            </button>
-            <button
-              onClick={() => {
-                setRole('SUPER_ADMIN');
-                speakText('Switched to AyuNexa Operations and Admin Console');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                role === 'ADMIN' || role === 'SUPER_ADMIN'
-                  ? 'bg-gradient-to-r from-[#4a044e] to-[#701a75] text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <ShieldCheck className={`w-3.5 h-3.5 ${role === 'ADMIN' || role === 'SUPER_ADMIN' ? 'text-amber-300' : 'text-purple-700'}`} />
-              <span>Admin Console</span>
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Sign out</span>
             </button>
           </div>
-
-          {/* Quick Login / Switch Modal Button */}
-          <button
-            onClick={() => setIsLoginModalOpen(true)}
-            title="Open AyuNexa Portal Authentication & Profile Picker"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-900 font-semibold transition-all cursor-pointer"
-          >
-            <LogIn className="w-3.5 h-3.5 text-pink-600" />
-            <span className="hidden lg:inline">Switch Portal</span>
-          </button>
 
           {/* Safety Governance Rules Viewer Button */}
           <button
