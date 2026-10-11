@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { AppProvider, useApp } from './context/AppContext';
+import { useApp } from './context/AppContext';
+import { AuthProvider, SupabaseAuthGate } from './auth/SupabaseAuth';
 import { Header } from './components/common/Header';
 import { EmergencyModal } from './components/common/EmergencyModal';
 import { OnboardingModal } from './components/common/OnboardingModal';
@@ -291,8 +292,10 @@ const MainAppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainAppContent />
-    </AppProvider>
+    <AuthProvider>
+      <SupabaseAuthGate>
+        <MainAppContent />
+      </SupabaseAuthGate>
+    </AuthProvider>
   );
 }

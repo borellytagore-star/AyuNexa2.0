@@ -1,0 +1,19 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+
+export const isSupabaseConfigured = Boolean(supabaseUrl && publishableKey);
+
+// A publishable key is intended for client-side use. Database access remains
+// protected by the profiles table's Row Level Security policies.
+export const supabase =
+  isSupabaseConfigured && supabaseUrl && publishableKey
+    ? createClient(supabaseUrl, publishableKey, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+        },
+      })
+    : null;

@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -777,15 +778,85 @@ interface AuthenticatedRequest extends Request {
   userName?: string;
 }
 
-function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  // Check authorization headers: x-admin-role or Bearer token simulation
-  const roleHeader = (req.headers['x-admin-role'] as AdminRole) || 'SUPER_ADMIN'; // Default session for admin console preview
-  const userIdHeader = (req.headers['x-user-id'] as string) || 'usr-4';
+function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const verifySession = async (): Promise<void> => {
+    const authorization = req.headers.authorization;
+    const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
 
-  req.userRole = roleHeader;
-  req.userId = userIdHeader;
-  const user = usersStore.find((u) => u.id === userIdHeader);
-  req.userName = user ? user.name : 'Authorized Admin';
+    if (!token) {
+      res.status(401).json({ error: 'Unauthorized', message: 'A valid Supabase access token is required.' });
+      return;
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+    if (!supabaseUrl || !publishableKey) {
+      res.status(503).json({ error: 'Auth unavailable', message: 'Supabase server configuration is missing.' });
+      return;
+    }
+
+    const authClient = createClient(supabaseUrl, publishableKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    const { data: authData, error: authError } = await authClient.auth.getUser(token);
+    if (authError || !authData.user) {
+      res.status(401).json({ error: 'Unauthorized', message: 'Your Supabase session is invalid or expired.' });
+      return;
+    }
+
+    const { data: profile, error: profileError } = await authClient
+      .from('profiles')
+      .select('id, display_name, role')
+      .eq('id', authData.user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      res.status(500).json({ error: 'Authentication failed', message: 'Unable to verify your AyuNexa profile.' });
+      return;
+    }
+    if (!profile) {
+      res.status(403).json({ error: 'Forbidden', message: 'No AyuNexa profile is assigned to this account.' });
+      return;
+    }
+
+    const roleMap: Record<string, AdminRole> = {
+      patient: 'PATIENT',
+      caregiver: 'CAREGIVER',
+      doctor: 'DOCTOR',
+      super_admin: 'SUPER_ADMIN',
+    };
+    const verifiedRole = roleMap[profile.role];
+    if (!verifiedRole) {
+      res.status(403).json({ error: 'Forbidden', message: 'Your account role is not authorized.' });
+      return;
+    }
+
+    // Identity and role come only from the verified Supabase user + RLS-protected profile.
+    // x-admin-role and x-user-id headers are intentionally ignored.
+    req.userRole = verifiedRole;
+    req.userId = authData.user.id;
+    req.userName = profile.display_name || authData.user.email || 'AyuNexa user';
+    next();
+  };
+
+  void verifySession().catch(() => {
+    if (!res.headersSent) {
+      res.status(401).json({ error: 'Unauthorized', message: 'Unable to validate the Supabase session.' });
+    }
+  });
+}
+
+function requireAdminRole(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (req.userRole !== 'SUPER_ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden',
+      message: 'The AyuNexa Operations API is restricted to Super Admin accounts.',
+    });
+    return;
+  }
   next();
 }
 
@@ -826,7 +897,7 @@ app.get('/api/auth/me', authMiddleware, (req: AuthenticatedRequest, res: Respons
 });
 
 // 2. User Management
-app.get('/api/admin/users', authMiddleware, requirePermission('USER_VIEW'), (req: Request, res: Response) => {
+app.get('/api/admin/users', authMiddleware, requireAdminRole, requirePermission('USER_VIEW'), (req: Request, res: Response) => {
   const query = ((req.query.q as string) || '').toLowerCase();
   const roleFilter = req.query.role as string;
   const statusFilter = req.query.status as string;
@@ -853,7 +924,7 @@ app.get('/api/admin/users', authMiddleware, requirePermission('USER_VIEW'), (req
   });
 });
 
-app.patch('/api/admin/users/:id/status', authMiddleware, requirePermission('USER_SUSPEND'), (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/users/:id/status', authMiddleware, requireAdminRole, requirePermission('USER_SUSPEND'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { status, reason } = req.body;
   const userIndex = usersStore.findIndex((u) => u.id === id);
@@ -868,7 +939,7 @@ app.patch('/api/admin/users/:id/status', authMiddleware, requirePermission('USER
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: `USER_STATUS_CHANGE_${status}`,
     targetType: 'USER_ACCOUNT',
     targetId: id,
@@ -883,7 +954,7 @@ app.patch('/api/admin/users/:id/status', authMiddleware, requirePermission('USER
   res.json({ success: true, user: usersStore[userIndex] });
 });
 
-app.patch('/api/admin/users/:id/verify', authMiddleware, requirePermission('USER_VERIFY'), (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/users/:id/verify', authMiddleware, requireAdminRole, requirePermission('USER_VERIFY'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = usersStore.find((u) => u.id === id);
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -895,7 +966,7 @@ app.patch('/api/admin/users/:id/verify', authMiddleware, requirePermission('USER
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'USER_VERIFIED',
     targetType: 'USER_ACCOUNT',
     targetId: id,
@@ -911,7 +982,7 @@ app.patch('/api/admin/users/:id/verify', authMiddleware, requirePermission('USER
 });
 
 // 3. Roles & Permissions
-app.get('/api/admin/roles', authMiddleware, (req: Request, res: Response) => {
+app.get('/api/admin/roles', authMiddleware, requireAdminRole, (req: Request, res: Response) => {
   res.json({
     roles: Object.keys(ROLE_PERMISSIONS),
     matrix: ROLE_PERMISSIONS,
@@ -919,7 +990,7 @@ app.get('/api/admin/roles', authMiddleware, (req: Request, res: Response) => {
 });
 
 // 4. Audit Logs
-app.get('/api/admin/audit-logs', authMiddleware, requirePermission('AUDIT_VIEW'), (req: Request, res: Response) => {
+app.get('/api/admin/audit-logs', authMiddleware, requireAdminRole, requirePermission('AUDIT_VIEW'), (req: Request, res: Response) => {
   const query = ((req.query.q as string) || '').toLowerCase();
   let results = [...auditLogsStore];
   if (query) {
@@ -935,11 +1006,11 @@ app.get('/api/admin/audit-logs', authMiddleware, requirePermission('AUDIT_VIEW')
 });
 
 // 5. Content Management
-app.get('/api/admin/content', authMiddleware, (req: Request, res: Response) => {
+app.get('/api/admin/content', authMiddleware, requireAdminRole, (req: Request, res: Response) => {
   res.json({ items: contentStore });
 });
 
-app.post('/api/admin/content', authMiddleware, requirePermission('CONTENT_CREATE'), (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/content', authMiddleware, requireAdminRole, requirePermission('CONTENT_CREATE'), (req: AuthenticatedRequest, res: Response) => {
   const { title, category, excerpt, content, audience, clinicalReviewStatus } = req.body;
   const newItem: ContentItem = {
     id: `cnt-${Date.now()}`,
@@ -960,7 +1031,7 @@ app.post('/api/admin/content', authMiddleware, requirePermission('CONTENT_CREATE
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'CONTENT_PUBLISHED',
     targetType: 'CONTENT_ITEM',
     targetId: newItem.id,
@@ -974,14 +1045,14 @@ app.post('/api/admin/content', authMiddleware, requirePermission('CONTENT_CREATE
   res.json({ success: true, item: newItem });
 });
 
-app.delete('/api/admin/content/:id', authMiddleware, requirePermission('CONTENT_DELETE'), (req: AuthenticatedRequest, res: Response) => {
+app.delete('/api/admin/content/:id', authMiddleware, requireAdminRole, requirePermission('CONTENT_DELETE'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   contentStore = contentStore.filter((c) => c.id !== id);
 
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'CONTENT_DELETED',
     targetType: 'CONTENT_ITEM',
     targetId: id,
@@ -994,7 +1065,7 @@ app.delete('/api/admin/content/:id', authMiddleware, requirePermission('CONTENT_
 });
 
 // 6. Payments & Transactions (Idempotent Refunds & Mock Provider)
-app.get('/api/admin/payments', authMiddleware, requirePermission('PAYMENT_VIEW'), (req: Request, res: Response) => {
+app.get('/api/admin/payments', authMiddleware, requireAdminRole, requirePermission('PAYMENT_VIEW'), (req: Request, res: Response) => {
   res.json({
     transactions: paymentsStore,
     summary: {
@@ -1009,7 +1080,7 @@ app.get('/api/admin/payments', authMiddleware, requirePermission('PAYMENT_VIEW')
   });
 });
 
-app.post('/api/admin/payments/:id/refund', authMiddleware, requirePermission('REFUND_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/payments/:id/refund', authMiddleware, requireAdminRole, requirePermission('REFUND_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { reason, idempotencyKey } = req.body;
 
@@ -1045,11 +1116,11 @@ app.post('/api/admin/payments/:id/refund', authMiddleware, requirePermission('RE
 });
 
 // 7. Notifications Broadcast
-app.get('/api/admin/notifications', authMiddleware, requirePermission('NOTIFICATION_MANAGE'), (req: Request, res: Response) => {
+app.get('/api/admin/notifications', authMiddleware, requireAdminRole, requirePermission('NOTIFICATION_MANAGE'), (req: Request, res: Response) => {
   res.json({ broadcasts: notificationsStore });
 });
 
-app.post('/api/admin/notifications', authMiddleware, requirePermission('NOTIFICATION_SEND'), (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/notifications', authMiddleware, requireAdminRole, requirePermission('NOTIFICATION_SEND'), (req: AuthenticatedRequest, res: Response) => {
   const { title, body, audience, priority, channel } = req.body;
 
   // Approximate recipient count based on role filter
@@ -1079,7 +1150,7 @@ app.post('/api/admin/notifications', authMiddleware, requirePermission('NOTIFICA
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'NOTIFICATION_BROADCAST_SENT',
     targetType: 'NOTIFICATION',
     targetId: newBroadcast.id,
@@ -1093,11 +1164,11 @@ app.post('/api/admin/notifications', authMiddleware, requirePermission('NOTIFICA
 });
 
 // 8. Orders / Refills
-app.get('/api/admin/orders', authMiddleware, requirePermission('ORDER_VIEW'), (req: Request, res: Response) => {
+app.get('/api/admin/orders', authMiddleware, requireAdminRole, requirePermission('ORDER_VIEW'), (req: Request, res: Response) => {
   res.json({ orders: ordersStore });
 });
 
-app.patch('/api/admin/orders/:id/status', authMiddleware, requirePermission('ORDER_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/orders/:id/status', authMiddleware, requireAdminRole, requirePermission('ORDER_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { status, notes } = req.body;
 
@@ -1127,11 +1198,11 @@ app.patch('/api/admin/orders/:id/status', authMiddleware, requirePermission('ORD
 });
 
 // 9. Support Tickets
-app.get('/api/admin/support', authMiddleware, requirePermission('SUPPORT_MANAGE'), (req: Request, res: Response) => {
+app.get('/api/admin/support', authMiddleware, requireAdminRole, requirePermission('SUPPORT_MANAGE'), (req: Request, res: Response) => {
   res.json({ tickets: ticketsStore });
 });
 
-app.post('/api/admin/support/:id/messages', authMiddleware, requirePermission('SUPPORT_REPLY'), (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/support/:id/messages', authMiddleware, requireAdminRole, requirePermission('SUPPORT_REPLY'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { text, isInternal } = req.body;
 
@@ -1171,7 +1242,7 @@ app.post('/api/admin/support/:id/messages', authMiddleware, requirePermission('S
 });
 
 // 10. Live Analytics
-app.get('/api/admin/analytics', authMiddleware, (req: Request, res: Response) => {
+app.get('/api/admin/analytics', authMiddleware, requireAdminRole, (req: Request, res: Response) => {
   const metrics: AdminAnalyticsMetrics = {
     totalUsers: usersStore.length,
     activeUsersToday: usersStore.filter((u) => u.status === 'ACTIVE').length,
@@ -1194,11 +1265,11 @@ app.get('/api/admin/analytics', authMiddleware, (req: Request, res: Response) =>
 });
 
 // 11. Feature Flags & Configuration
-app.get('/api/admin/configuration', authMiddleware, requirePermission('FEATURE_FLAG_MANAGE'), (req: Request, res: Response) => {
+app.get('/api/admin/configuration', authMiddleware, requireAdminRole, requirePermission('FEATURE_FLAG_MANAGE'), (req: Request, res: Response) => {
   res.json({ flags: featureFlagsStore });
 });
 
-app.patch('/api/admin/configuration/flags/:key', authMiddleware, requirePermission('FEATURE_FLAG_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/configuration/flags/:key', authMiddleware, requireAdminRole, requirePermission('FEATURE_FLAG_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
   const { key } = req.params;
   const { isEnabled, reason } = req.body;
 
@@ -1214,7 +1285,7 @@ app.patch('/api/admin/configuration/flags/:key', authMiddleware, requirePermissi
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: `FEATURE_FLAG_${isEnabled ? 'ENABLED' : 'DISABLED'}`,
     targetType: 'FEATURE_FLAG',
     targetId: key,
@@ -1230,11 +1301,11 @@ app.patch('/api/admin/configuration/flags/:key', authMiddleware, requirePermissi
 });
 
 // 12. App Versions
-app.get('/api/admin/app-versions', authMiddleware, requirePermission('APP_VERSION_MANAGE'), (req: Request, res: Response) => {
+app.get('/api/admin/app-versions', authMiddleware, requireAdminRole, requirePermission('APP_VERSION_MANAGE'), (req: Request, res: Response) => {
   res.json({ versions: appVersionsStore });
 });
 
-app.put('/api/admin/app-versions/:platform', authMiddleware, requirePermission('APP_VERSION_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
+app.put('/api/admin/app-versions/:platform', authMiddleware, requireAdminRole, requirePermission('APP_VERSION_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
   const { platform } = req.params;
   const { minimumSupportedVersion, recommendedVersion, releaseStatus, maintenanceMode } = req.body;
 
@@ -1250,7 +1321,7 @@ app.put('/api/admin/app-versions/:platform', authMiddleware, requirePermission('
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'APP_VERSION_CONFIG_UPDATED',
     targetType: 'APP_VERSION_POLICY',
     targetId: platform,
@@ -1265,11 +1336,11 @@ app.put('/api/admin/app-versions/:platform', authMiddleware, requirePermission('
 });
 
 // 13. Coupons & Discounts
-app.get('/api/admin/coupons', authMiddleware, requirePermission('COUPON_MANAGE'), (req: Request, res: Response) => {
+app.get('/api/admin/coupons', authMiddleware, requireAdminRole, requirePermission('COUPON_MANAGE'), (req: Request, res: Response) => {
   res.json({ coupons: couponsStore });
 });
 
-app.post('/api/admin/coupons', authMiddleware, requirePermission('COUPON_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/coupons', authMiddleware, requireAdminRole, requirePermission('COUPON_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
   const { code, description, discountType, discountValue, startDate, endDate, usageLimit, applicableTo } = req.body;
   const newCoupon: CouponItem = {
     id: `cpn-${Date.now()}`,
@@ -1289,7 +1360,7 @@ app.post('/api/admin/coupons', authMiddleware, requirePermission('COUPON_MANAGE'
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'COUPON_CREATED',
     targetType: 'COMMERCIAL_PROMO',
     targetId: newCoupon.id,
@@ -1303,11 +1374,11 @@ app.post('/api/admin/coupons', authMiddleware, requirePermission('COUPON_MANAGE'
 });
 
 // 14. Partners / Vendors
-app.get('/api/admin/partners', authMiddleware, requirePermission('PARTNER_MANAGE'), (req: Request, res: Response) => {
+app.get('/api/admin/partners', authMiddleware, requireAdminRole, requirePermission('PARTNER_MANAGE'), (req: Request, res: Response) => {
   res.json({ partners: partnersStore });
 });
 
-app.patch('/api/admin/partners/:id/status', authMiddleware, requirePermission('PARTNER_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/partners/:id/status', authMiddleware, requireAdminRole, requirePermission('PARTNER_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { status } = req.body;
   const partner = partnersStore.find((p) => p.id === id);
@@ -1319,7 +1390,7 @@ app.patch('/api/admin/partners/:id/status', authMiddleware, requirePermission('P
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: `PARTNER_STATUS_${status}`,
     targetType: 'HEALTHCARE_PARTNER',
     targetId: id,
@@ -1333,11 +1404,11 @@ app.patch('/api/admin/partners/:id/status', authMiddleware, requirePermission('P
 });
 
 // 15. Content Moderation
-app.get('/api/admin/moderation', authMiddleware, requirePermission('MODERATION_MANAGE'), (req: Request, res: Response) => {
+app.get('/api/admin/moderation', authMiddleware, requireAdminRole, requirePermission('MODERATION_MANAGE'), (req: Request, res: Response) => {
   res.json({ items: moderationStore });
 });
 
-app.patch('/api/admin/moderation/:id/action', authMiddleware, requirePermission('MODERATION_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/moderation/:id/action', authMiddleware, requireAdminRole, requirePermission('MODERATION_MANAGE'), (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { action, notes } = req.body;
   const item = moderationStore.find((m) => m.id === id);
@@ -1349,7 +1420,7 @@ app.patch('/api/admin/moderation/:id/action', authMiddleware, requirePermission(
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: `CONTENT_MODERATION_${action}`,
     targetType: 'USER_SUBMITTED_CONTENT',
     targetId: id,
@@ -1363,11 +1434,11 @@ app.patch('/api/admin/moderation/:id/action', authMiddleware, requirePermission(
 });
 
 // 16. Devices & Sessions
-app.get('/api/admin/devices', authMiddleware, (req: Request, res: Response) => {
+app.get('/api/admin/devices', authMiddleware, requireAdminRole, (req: Request, res: Response) => {
   res.json({ devices: devicesStore });
 });
 
-app.post('/api/admin/devices/:id/revoke', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/devices/:id/revoke', authMiddleware, requireAdminRole, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const dev = devicesStore.find((d) => d.id === id);
   if (!dev) return res.status(404).json({ error: 'Device session not found' });
@@ -1377,7 +1448,7 @@ app.post('/api/admin/devices/:id/revoke', authMiddleware, (req: AuthenticatedReq
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'SESSION_REVOKED_FORCE_LOGOUT',
     targetType: 'USER_SESSION',
     targetId: id,
@@ -1391,13 +1462,13 @@ app.post('/api/admin/devices/:id/revoke', authMiddleware, (req: AuthenticatedReq
 });
 
 // 17. Reports Generation & CSV Export
-app.get('/api/admin/reports/:type/export', authMiddleware, requirePermission('REPORT_EXPORT'), (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/reports/:type/export', authMiddleware, requireAdminRole, requirePermission('REPORT_EXPORT'), (req: AuthenticatedRequest, res: Response) => {
   const { type } = req.params;
 
   logAdminAction({
     actorUserId: req.userId || 'usr-4',
     actorName: req.userName || 'Kavita Menon',
-    actorRole: req.userRole || 'SUPER_ADMIN',
+    actorRole: req.userRole || 'PATIENT',
     action: 'REPORT_EXPORTED_CSV',
     targetType: 'ANALYTICS_REPORT',
     targetId: type,
