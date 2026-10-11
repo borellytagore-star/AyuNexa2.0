@@ -778,22 +778,24 @@ interface AuthenticatedRequest extends Request {
   userName?: string;
 }
 
-async function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const authorization = req.headers.authorization;
-  const token = authorization?.match(/^Bearer\\s+(.+)$/i)?.[1];
+function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const verifySession = async (): Promise<void> => {
+    const authorization = req.headers.authorization;
+    const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized', message: 'A valid Supabase access token is required.' });
-  }
+    if (!token) {
+      res.status(401).json({ error: 'Unauthorized', message: 'A valid Supabase access token is required.' });
+      return;
+    }
 
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-  if (!supabaseUrl || !publishableKey) {
-    return res.status(503).json({ error: 'Auth unavailable', message: 'Supabase server configuration is missing.' });
-  }
+    if (!supabaseUrl || !publishableKey) {
+      res.status(503).json({ error: 'Auth unavailable', message: 'Supabase server configuration is missing.' });
+      return;
+    }
 
-  try {
     const authClient = createClient(supabaseUrl, publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers: { Authorization: `Bearer ${token}` } },
@@ -801,7 +803,8 @@ async function authMiddleware(req: AuthenticatedRequest, res: Response, next: Ne
 
     const { data: authData, error: authError } = await authClient.auth.getUser(token);
     if (authError || !authData.user) {
-      return res.status(401).json({ error: 'Unauthorized', message: 'Your Supabase session is invalid or expired.' });
+      res.status(401).json({ error: 'Unauthorized', message: 'Your Supabase session is invalid or expired.' });
+      return;
     }
 
     const { data: profile, error: profileError } = await authClient
@@ -811,10 +814,12 @@ async function authMiddleware(req: AuthenticatedRequest, res: Response, next: Ne
       .maybeSingle();
 
     if (profileError) {
-      return res.status(500).json({ error: 'Authentication failed', message: 'Unable to verify your AyuNexa profile.' });
+      res.status(500).json({ error: 'Authentication failed', message: 'Unable to verify your AyuNexa profile.' });
+      return;
     }
     if (!profile) {
-      return res.status(403).json({ error: 'Forbidden', message: 'No AyuNexa profile is assigned to this account.' });
+      res.status(403).json({ error: 'Forbidden', message: 'No AyuNexa profile is assigned to this account.' });
+      return;
     }
 
     const roleMap: Record<string, AdminRole> = {
@@ -825,7 +830,8 @@ async function authMiddleware(req: AuthenticatedRequest, res: Response, next: Ne
     };
     const verifiedRole = roleMap[profile.role];
     if (!verifiedRole) {
-      return res.status(403).json({ error: 'Forbidden', message: 'Your account role is not authorized.' });
+      res.status(403).json({ error: 'Forbidden', message: 'Your account role is not authorized.' });
+      return;
     }
 
     // Identity and role come only from the verified Supabase user + RLS-protected profile.
@@ -833,10 +839,14 @@ async function authMiddleware(req: AuthenticatedRequest, res: Response, next: Ne
     req.userRole = verifiedRole;
     req.userId = authData.user.id;
     req.userName = profile.display_name || authData.user.email || 'AyuNexa user';
-    return next();
-  } catch {
-    return res.status(401).json({ error: 'Unauthorized', message: 'Unable to validate the Supabase session.' });
-  }
+    next();
+  };
+
+  void verifySession().catch(() => {
+    if (!res.headersSent) {
+      res.status(401).json({ error: 'Unauthorized', message: 'Unable to validate the Supabase session.' });
+    }
+  });
 }
 
 function requirePermission(perm: AdminPermission) {
