@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -777,16 +778,65 @@ interface AuthenticatedRequest extends Request {
   userName?: string;
 }
 
-function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  // Check authorization headers: x-admin-role or Bearer token simulation
-  const roleHeader = (req.headers['x-admin-role'] as AdminRole) || 'SUPER_ADMIN'; // Default session for admin console preview
-  const userIdHeader = (req.headers['x-user-id'] as string) || 'usr-4';
+async function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const authorization = req.headers.authorization;
+  const token = authorization?.match(/^Bearer\\s+(.+)$/i)?.[1];
 
-  req.userRole = roleHeader;
-  req.userId = userIdHeader;
-  const user = usersStore.find((u) => u.id === userIdHeader);
-  req.userName = user ? user.name : 'Authorized Admin';
-  next();
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized', message: 'A valid Supabase access token is required.' });
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+  if (!supabaseUrl || !publishableKey) {
+    return res.status(503).json({ error: 'Auth unavailable', message: 'Supabase server configuration is missing.' });
+  }
+
+  try {
+    const authClient = createClient(supabaseUrl, publishableKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    const { data: authData, error: authError } = await authClient.auth.getUser(token);
+    if (authError || !authData.user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Your Supabase session is invalid or expired.' });
+    }
+
+    const { data: profile, error: profileError } = await authClient
+      .from('profiles')
+      .select('id, display_name, role')
+      .eq('id', authData.user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      return res.status(500).json({ error: 'Authentication failed', message: 'Unable to verify your AyuNexa profile.' });
+    }
+    if (!profile) {
+      return res.status(403).json({ error: 'Forbidden', message: 'No AyuNexa profile is assigned to this account.' });
+    }
+
+    const roleMap: Record<string, AdminRole> = {
+      patient: 'PATIENT',
+      caregiver: 'CAREGIVER',
+      doctor: 'DOCTOR',
+      super_admin: 'SUPER_ADMIN',
+    };
+    const verifiedRole = roleMap[profile.role];
+    if (!verifiedRole) {
+      return res.status(403).json({ error: 'Forbidden', message: 'Your account role is not authorized.' });
+    }
+
+    // Identity and role come only from the verified Supabase user + RLS-protected profile.
+    // x-admin-role and x-user-id headers are intentionally ignored.
+    req.userRole = verifiedRole;
+    req.userId = authData.user.id;
+    req.userName = profile.display_name || authData.user.email || 'AyuNexa user';
+    return next();
+  } catch {
+    return res.status(401).json({ error: 'Unauthorized', message: 'Unable to validate the Supabase session.' });
+  }
 }
 
 function requirePermission(perm: AdminPermission) {
