@@ -132,8 +132,20 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [role, setRole] = useState<UserRole>('PATIENT');
+export const AppProvider: React.FC<{ children: React.ReactNode; authRole: UserRole }> = ({ children, authRole }) => {
+  const [role, setRoleState] = useState<UserRole>(authRole);
+
+  // The authenticated Supabase profile is the source of authority. Non-admin
+  // users cannot switch themselves into another portal from the UI.
+  useEffect(() => {
+    setRoleState(authRole);
+  }, [authRole]);
+
+  const setRole = (nextRole: UserRole) => {
+    if (nextRole === authRole || authRole === 'SUPER_ADMIN') {
+      setRoleState(nextRole);
+    }
+  };
   const [isAssistedMode, setIsAssistedMode] = useState<boolean>(true); // Default to Assisted Mode for high accessibility
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
   const [isMobileFrame, setIsMobileFrame] = useState<boolean>(false);
