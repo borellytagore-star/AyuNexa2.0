@@ -141,11 +141,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode; authRole: UserRo
     setRoleState(authRole);
   }, [authRole]);
 
-  const setRole = (nextRole: UserRole) => {
+  const setRole = React.useCallback((nextRole: UserRole) => {
     if (nextRole === authRole || authRole === 'SUPER_ADMIN') {
       setRoleState(nextRole);
     }
-  };
+  }, [authRole]);
   const [isAssistedMode, setIsAssistedMode] = useState<boolean>(true); // Default to Assisted Mode for high accessibility
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
   const [isMobileFrame, setIsMobileFrame] = useState<boolean>(false);
